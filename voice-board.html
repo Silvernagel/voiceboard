@@ -1,0 +1,887 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Voice Board">
+<title>Voice Board</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #e6edf0;
+    --surface: #ffffff;
+    --ink: #10222b;
+    --muted: #46595f;
+    --line: #aebdc4;
+    --accent: #0b6e7a;
+    --accent-ink: #ffffff;
+    --play: #f2b705;
+    --play-ink: #10222b;
+    --danger: #b3261e;
+    --field: #ffffff;
+    --shade: rgba(8, 20, 26, 0.6);
+    color-scheme: light;
+    box-sizing: border-box;
+    padding-top: env(safe-area-inset-top, 0px);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0d1316;
+      --surface: #182227;
+      --ink: #eef4f6;
+      --muted: #a7b9c0;
+      --line: #3a4d55;
+      --accent: #4cc0cf;
+      --accent-ink: #062226;
+      --play: #f2b705;
+      --play-ink: #10222b;
+      --danger: #ff8a80;
+      --field: #0f181c;
+      --shade: rgba(0, 0, 0, 0.7);
+      color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0d1316;
+    --surface: #182227;
+    --ink: #eef4f6;
+    --muted: #a7b9c0;
+    --line: #3a4d55;
+    --accent: #4cc0cf;
+    --accent-ink: #062226;
+    --play: #f2b705;
+    --play-ink: #10222b;
+    --danger: #ff8a80;
+    --field: #0f181c;
+    --shade: rgba(0, 0, 0, 0.7);
+    color-scheme: dark;
+  }
+
+  html {
+    height: 100%;
+    scroll-padding-top: env(safe-area-inset-top, 0px);
+    -webkit-text-size-adjust: 100%;
+  }
+  *, *::before, *::after { box-sizing: border-box; }
+  body {
+    margin: 0;
+    min-height: 100%;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: "Atkinson Hyperlegible", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    font-size: 18px;
+    line-height: 1.4;
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-touch-callout: none;
+    touch-action: manipulation;
+  }
+  body.modal { overflow: hidden; }
+  input, textarea { -webkit-user-select: text; user-select: text; }
+  button { font: inherit; color: inherit; touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
+  :focus-visible { outline: 4px solid var(--accent); outline-offset: 3px; }
+
+  [hidden] { display: none !important; }
+  #app { min-height: 100%; display: flex; flex-direction: column; }
+
+  #banner {
+    margin: 12px 14px 0;
+    padding: 12px 14px;
+    border: 3px solid var(--danger);
+    border-radius: 14px;
+    background: var(--surface);
+    font-weight: 700;
+  }
+
+  /* Caregiver bar */
+  #editbar {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 12px 18px;
+    margin: 12px 14px 0;
+    padding: 12px 14px;
+    background: var(--surface);
+    border: 3px solid var(--accent);
+    border-radius: 16px;
+  }
+  #editbar .title { font-weight: 700; font-size: 1.1rem; flex: 1 1 auto; }
+  #editbar .cols { display: flex; align-items: center; gap: 6px; }
+  #editbar .cols span { color: var(--muted); margin-right: 4px; }
+  .seg {
+    min-width: 44px; min-height: 44px; padding: 0 10px;
+    border: 2px solid var(--line); border-radius: 12px; background: var(--field); cursor: pointer;
+  }
+  .seg[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 700; }
+
+  /* Buttons */
+  .btn {
+    min-height: 48px; padding: 0 20px;
+    border: 3px solid var(--line); border-radius: 14px;
+    background: var(--field); cursor: pointer; font-weight: 700;
+  }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+  .btn.danger { border-color: var(--danger); color: var(--danger); }
+  .btn.ghost { background: transparent; }
+  .btn[disabled] { opacity: 0.45; cursor: default; }
+  .btn.rec.recording { background: var(--danger); border-color: var(--danger); color: #fff; }
+
+  /* Board */
+  #grid {
+    flex: 1 0 auto;
+    display: grid;
+    grid-template-columns: repeat(var(--cols, 2), minmax(0, 1fr));
+    gap: 14px;
+    padding: 14px;
+    align-content: start;
+  }
+  .tile {
+    position: relative;
+    display: flex; flex-direction: column;
+    min-width: 0;
+    background: var(--surface);
+    border: 4px solid var(--line);
+    border-radius: 24px;
+    overflow: hidden;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+    transition: transform 0.08s ease;
+  }
+  .tile:active { transform: scale(0.97); }
+  .tile .pic {
+    width: 100%; aspect-ratio: 1 / 1;
+    display: flex; align-items: center; justify-content: center;
+    background: var(--bg);
+    background: color-mix(in srgb, var(--line) 35%, var(--surface));
+    overflow: hidden;
+  }
+  .tile .pic img { width: 100%; height: 100%; object-fit: cover; display: block; pointer-events: none; -webkit-user-drag: none; }
+  .tile .pic.emoji { font-size: clamp(64px, 17vw, 150px); line-height: 1; }
+  .tile .lab {
+    padding: 12px 10px 14px;
+    text-align: center; font-weight: 700;
+    font-size: clamp(22px, 4.6vw, 38px);
+    line-height: 1.15;
+    overflow-wrap: anywhere;
+  }
+  .tile.playing { border-color: var(--play); box-shadow: 0 0 0 8px var(--play); }
+  .tile.playing .lab { background: var(--play); color: var(--play-ink); }
+
+  .editing .tile { border-style: dashed; border-color: var(--accent); }
+  .tile .badge {
+    position: absolute; left: 8px; top: 8px;
+    padding: 4px 10px; border-radius: 999px;
+    background: var(--danger); color: #fff; font-size: 0.85rem; font-weight: 700;
+  }
+  .tile .badge.ok { background: var(--accent); color: var(--accent-ink); }
+  .tile .mv { position: absolute; right: 8px; top: 8px; display: flex; gap: 6px; }
+  .tile .mv button {
+    width: 44px; height: 44px; border-radius: 12px; border: 2px solid var(--line);
+    background: var(--surface); font-size: 1.3rem; cursor: pointer; line-height: 1;
+  }
+  .tile .mv button[disabled] { opacity: 0.3; }
+
+  .addtile {
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px;
+    min-height: 200px;
+    border: 4px dashed var(--accent); border-radius: 24px;
+    background: transparent; color: var(--accent); font-weight: 700;
+    font-size: clamp(20px, 4vw, 30px); cursor: pointer;
+  }
+  .addtile .plus { font-size: 3rem; line-height: 1; }
+
+  .empty { grid-column: 1 / -1; padding: 40px 12px; text-align: center; color: var(--muted); font-size: 1.2rem; }
+
+  footer { display: flex; justify-content: flex-end; padding: 6px 14px 14px; }
+  #gear {
+    position: relative; overflow: hidden;
+    min-height: 44px; padding: 0 16px;
+    border: 2px solid var(--line); border-radius: 999px;
+    background: transparent; color: var(--muted); cursor: pointer;
+    -webkit-user-select: none; user-select: none; -webkit-touch-callout: none;
+  }
+  #gear::after {
+    content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 0;
+    background: var(--accent); opacity: 0.3; pointer-events: none;
+  }
+  #gear.holding::after { width: 100%; transition: width 1.5s linear; }
+
+  /* Editor */
+  .overlay {
+    position: fixed; top: 0; right: 0; bottom: 0; left: 0; z-index: 20;
+    background: var(--shade);
+    overflow-y: auto; -webkit-overflow-scrolling: touch;
+    padding: calc(16px + env(safe-area-inset-top, 0px)) 16px calc(16px + env(safe-area-inset-bottom, 0px));
+  }
+  .overlay[hidden] { display: none; }
+  .sheet {
+    max-width: 580px; margin: 0 auto;
+    background: var(--surface); border-radius: 22px; padding: 20px;
+    display: flex; flex-direction: column; gap: 18px;
+  }
+  .sheet h2 { margin: 0; font-size: 1.5rem; }
+  .photo-row { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
+  .photo-prev {
+    width: 140px; height: 140px; flex: 0 0 auto;
+    border: 3px solid var(--line); border-radius: 18px; overflow: hidden;
+    display: flex; align-items: center; justify-content: center;
+    background: var(--bg);
+    background: color-mix(in srgb, var(--line) 35%, var(--surface));
+    font-size: 72px; line-height: 1;
+  }
+  .photo-prev img { width: 100%; height: 100%; object-fit: cover; }
+  .photo-btns { display: flex; flex-direction: column; gap: 10px; }
+  .field { display: flex; flex-direction: column; gap: 6px; }
+  .field label { font-weight: 700; }
+  .field .hint { color: var(--muted); font-size: 0.95rem; }
+  .field input, .field textarea {
+    width: 100%; font: inherit; color: var(--ink);
+    padding: 12px 14px; border: 3px solid var(--line); border-radius: 12px; background: var(--field);
+  }
+  .field textarea { min-height: 84px; resize: vertical; }
+  .field input.emoji-in { width: 90px; font-size: 1.6rem; text-align: center; }
+  .rec { border: 3px solid var(--line); border-radius: 16px; padding: 14px; display: flex; flex-direction: column; gap: 12px; }
+  .rec .rec-title { font-weight: 700; }
+  .rec-status { color: var(--muted); min-height: 1.4em; }
+  .rec-status.err { color: var(--danger); font-weight: 700; }
+  .rec-btns { display: flex; flex-wrap: wrap; gap: 10px; }
+  .sheet-btns { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+  .sheet-btns .spacer { flex: 1 1 auto; }
+  .form-err { color: var(--danger); font-weight: 700; min-height: 1.2em; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .tile, #gear.holding::after { transition: none; }
+  }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="banner" hidden role="alert"></div>
+
+  <div id="editbar" hidden>
+    <div class="title">Caregiver mode</div>
+    <div class="cols" role="group" aria-label="Pictures per row">
+      <span>Pictures per row</span>
+      <button class="seg" data-cols="1" aria-pressed="false">1</button>
+      <button class="seg" data-cols="2" aria-pressed="true">2</button>
+      <button class="seg" data-cols="3" aria-pressed="false">3</button>
+      <button class="seg" data-cols="4" aria-pressed="false">4</button>
+    </div>
+    <button class="btn primary" id="doneBtn">Done</button>
+  </div>
+
+  <main id="grid" aria-label="Voice board"></main>
+
+  <footer>
+    <button id="gear" aria-label="Hold for 2 seconds to edit the board">&#9881; Hold to edit</button>
+  </footer>
+</div>
+
+<div id="editor" class="overlay" hidden>
+  <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="edTitle">
+    <h2 id="edTitle">New picture</h2>
+
+    <div class="photo-row">
+      <div class="photo-prev" id="edPrev" aria-hidden="true"></div>
+      <div class="photo-btns">
+        <button class="btn" id="photoBtn" type="button">Choose or take photo</button>
+        <button class="btn ghost" id="photoClear" type="button">Remove photo</button>
+        <input type="file" id="photoFile" accept="image/*" hidden>
+      </div>
+    </div>
+
+    <div class="field">
+      <label for="edLabel">Name under the picture</label>
+      <input id="edLabel" type="text" autocomplete="off" placeholder="Charlie" maxlength="40">
+    </div>
+
+    <div class="field">
+      <label for="edPhrase">What it says</label>
+      <textarea id="edPhrase" placeholder="This is Charlie, my grandson." maxlength="200"></textarea>
+      <div class="hint">Used to speak the words in a computer voice until you record her own voice.</div>
+    </div>
+
+    <div class="field">
+      <label for="edEmoji">Emoji to show when there is no photo</label>
+      <input id="edEmoji" class="emoji-in" type="text" autocomplete="off" maxlength="4">
+    </div>
+
+    <div class="rec">
+      <div class="rec-title">Her voice</div>
+      <div class="rec-status" id="recStatus" role="status"></div>
+      <div class="rec-btns">
+        <button class="btn rec" id="recBtn" type="button">&#9679; Record</button>
+        <button class="btn" id="playBtn" type="button">&#9654; Play</button>
+        <button class="btn ghost" id="clearRec" type="button">Delete recording</button>
+      </div>
+    </div>
+
+    <div class="form-err" id="formErr" role="alert"></div>
+
+    <div class="sheet-btns">
+      <button class="btn primary" id="saveBtn" type="button">Save</button>
+      <button class="btn" id="cancelBtn" type="button">Cancel</button>
+      <span class="spacer"></span>
+      <button class="btn danger" id="deleteBtn" type="button">Delete picture</button>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  /* ---------- State ---------- */
+  var DB_NAME = 'voice-board', DB_VER = 1;
+  var MAX_REC_SECONDS = 20;
+  var db = null, dbOK = false;
+  var tiles = [];            // {id,label,phrase,emoji,photoBuf,photoType,audioBuf,audioType,order}
+  var urls = {};             // id -> {photo, audio} object URLs
+  var cols = 2;
+  var editMode = false;
+  var player = new Audio();
+  player.preload = 'auto';
+  var playingId = null;
+  var draft = null;          // editor working copy
+  var rec = null;            // {recorder, stream, chunks, timer, started, mime}
+
+  var STARTERS = [
+    { label: 'Restroom', phrase: 'I need to use the restroom.', emoji: '\uD83D\uDEBD' },
+    { label: 'Water',    phrase: 'I would like some water.',    emoji: '\uD83D\uDCA7' },
+    { label: 'Hungry',   phrase: 'I am hungry.',                emoji: '\uD83C\uDF7D\uFE0F' },
+    { label: 'Hurts',    phrase: 'Something hurts.',            emoji: '\uD83E\uDD15' },
+    { label: 'Yes',      phrase: 'Yes.',                        emoji: '\uD83D\uDC4D' },
+    { label: 'No',       phrase: 'No.',                         emoji: '\uD83D\uDC4E' }
+  ];
+
+  var $ = function (id) { return document.getElementById(id); };
+  var grid = $('grid');
+
+  /* ---------- IndexedDB ---------- */
+  function openDB() {
+    return new Promise(function (res, rej) {
+      if (!window.indexedDB) { rej(new Error('no indexedDB')); return; }
+      var r;
+      try { r = indexedDB.open(DB_NAME, DB_VER); } catch (e) { rej(e); return; }
+      r.onupgradeneeded = function () {
+        var d = r.result;
+        if (!d.objectStoreNames.contains('tiles')) d.createObjectStore('tiles', { keyPath: 'id' });
+        if (!d.objectStoreNames.contains('meta')) d.createObjectStore('meta');
+      };
+      r.onsuccess = function () { res(r.result); };
+      r.onerror = function () { rej(r.error); };
+      r.onblocked = function () { rej(new Error('blocked')); };
+    });
+  }
+  function tx(store, mode, fn) {
+    return new Promise(function (res, rej) {
+      var t, out;
+      try {
+        t = db.transaction(store, mode);
+        out = fn(t.objectStore(store));
+      } catch (e) { rej(e); return; }
+      t.oncomplete = function () { res(out && out.result); };
+      t.onerror = function () { rej(t.error); };
+      t.onabort = function () { rej(t.error || new Error('aborted')); };
+    });
+  }
+  function dbGetAll()      { return tx('tiles', 'readonly', function (s) { return s.getAll(); }); }
+  function dbPut(t)        { return dbOK ? tx('tiles', 'readwrite', function (s) { return s.put(t); }) : Promise.resolve(); }
+  function dbDelete(id)    { return dbOK ? tx('tiles', 'readwrite', function (s) { return s.delete(id); }) : Promise.resolve(); }
+  function metaGet(k)      { return tx('meta', 'readonly', function (s) { return s.get(k); }); }
+  function metaSet(k, v)   { return dbOK ? tx('meta', 'readwrite', function (s) { return s.put(v, k); }) : Promise.resolve(); }
+
+  /* ---------- Helpers ---------- */
+  function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
+  function blobToBuf(b) {
+    return new Promise(function (res, rej) {
+      if (b.arrayBuffer) { b.arrayBuffer().then(res, rej); return; }
+      var fr = new FileReader();
+      fr.onload = function () { res(fr.result); };
+      fr.onerror = function () { rej(fr.error); };
+      fr.readAsArrayBuffer(b);
+    });
+  }
+  function bufToBlob(buf, type) { return new Blob([buf], { type: type || '' }); }
+  function sortTiles() { tiles.sort(function (a, b) { return a.order - b.order; }); }
+  function findTile(id) { for (var i = 0; i < tiles.length; i++) if (tiles[i].id === id) return tiles[i]; return null; }
+  function revokeUrls(id) {
+    var u = urls[id];
+    if (u) { if (u.photo) URL.revokeObjectURL(u.photo); if (u.audio) URL.revokeObjectURL(u.audio); }
+    delete urls[id];
+  }
+  function makeUrls(t) {
+    revokeUrls(t.id);
+    var u = {};
+    if (t.photoBuf) u.photo = URL.createObjectURL(bufToBlob(t.photoBuf, t.photoType));
+    if (t.audioBuf) u.audio = URL.createObjectURL(bufToBlob(t.audioBuf, t.audioType));
+    urls[t.id] = u;
+  }
+  function showBanner(msg) { var b = $('banner'); b.textContent = msg; b.hidden = !msg; }
+
+  /* ---------- Startup ---------- */
+  function seedTiles() {
+    var jobs = [];
+    STARTERS.forEach(function (s, i) {
+      var t = { id: uid() + i, label: s.label, phrase: s.phrase, emoji: s.emoji, order: i };
+      tiles.push(t);
+      jobs.push(dbPut(t));
+    });
+    jobs.push(metaSet('seeded', true));
+    return Promise.all(jobs);
+  }
+
+  function init() {
+    return openDB().then(function (d) {
+      db = d; dbOK = true;
+      return dbGetAll();
+    }).then(function (all) {
+      tiles = all || [];
+      return Promise.all([metaGet('seeded'), metaGet('cols')]);
+    }).then(function (m) {
+      if (m[1]) cols = m[1];
+      if (!m[0] && tiles.length === 0) return seedTiles();
+    }).catch(function () {
+      dbOK = false;
+      if (tiles.length === 0) { tiles = []; STARTERS.forEach(function (s, i) { tiles.push({ id: uid() + i, label: s.label, phrase: s.phrase, emoji: s.emoji, order: i }); }); }
+      showBanner('This device is not keeping saved pictures or recordings (private browsing may be on). Anything you add will be lost when the page closes.');
+    }).then(function () {
+      sortTiles();
+      tiles.forEach(makeUrls);
+      render();
+      try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist(); } catch (e) {}
+    });
+  }
+
+  /* ---------- Board ---------- */
+  function render() {
+    grid.style.setProperty('--cols', cols);
+    document.body.classList.toggle('editing', editMode);
+    $('editbar').hidden = !editMode;
+    $('gear').parentNode.hidden = editMode;
+    Array.prototype.forEach.call(document.querySelectorAll('.seg'), function (b) {
+      b.setAttribute('aria-pressed', String(Number(b.getAttribute('data-cols')) === cols));
+    });
+    grid.textContent = '';
+    if (!tiles.length && !editMode) {
+      var e = document.createElement('div');
+      e.className = 'empty';
+      e.textContent = 'No pictures yet. Press and hold \u201CHold to edit\u201D at the bottom to add some.';
+      grid.appendChild(e);
+    }
+    tiles.forEach(function (t, i) { grid.appendChild(buildTile(t, i)); });
+    if (editMode) grid.appendChild(buildAddTile());
+    if (playingId) markPlaying(playingId);
+  }
+
+  function buildTile(t, index) {
+    var el = document.createElement('div');
+    el.className = 'tile';
+    el.setAttribute('role', 'button');
+    el.tabIndex = 0;
+    el.setAttribute('data-id', t.id);
+    el.setAttribute('aria-label', (editMode ? 'Edit ' : '') + (t.label || t.phrase));
+
+    var pic = document.createElement('div');
+    pic.className = 'pic';
+    var u = urls[t.id] || {};
+    if (u.photo) {
+      var img = document.createElement('img');
+      img.src = u.photo; img.alt = ''; img.draggable = false;
+      pic.appendChild(img);
+    } else {
+      pic.classList.add('emoji');
+      pic.textContent = t.emoji || '\uD83D\uDDBC\uFE0F';
+    }
+    var lab = document.createElement('div');
+    lab.className = 'lab';
+    lab.textContent = t.label || '';
+    el.appendChild(pic);
+    el.appendChild(lab);
+
+    if (editMode) {
+      var badge = document.createElement('div');
+      badge.className = 'badge' + (t.audioBuf ? ' ok' : '');
+      badge.textContent = t.audioBuf ? 'Voice recorded' : 'No recording yet';
+      el.appendChild(badge);
+
+      var mv = document.createElement('div');
+      mv.className = 'mv';
+      var left = document.createElement('button');
+      left.type = 'button'; left.textContent = '\u2190'; left.setAttribute('aria-label', 'Move earlier');
+      left.disabled = index === 0;
+      var right = document.createElement('button');
+      right.type = 'button'; right.textContent = '\u2192'; right.setAttribute('aria-label', 'Move later');
+      right.disabled = index === tiles.length - 1;
+      left.addEventListener('click', function (ev) { ev.stopPropagation(); moveTile(index, -1); });
+      right.addEventListener('click', function (ev) { ev.stopPropagation(); moveTile(index, 1); });
+      mv.appendChild(left); mv.appendChild(right);
+      el.appendChild(mv);
+    }
+
+    function activate() { if (editMode) openEditor(t.id); else speak(t); }
+    el.addEventListener('click', activate);
+    el.addEventListener('keydown', function (ev) {
+      if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); activate(); }
+    });
+    return el;
+  }
+
+  function buildAddTile() {
+    var b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'addtile';
+    var plus = document.createElement('span'); plus.className = 'plus'; plus.textContent = '+';
+    var txt = document.createElement('span'); txt.textContent = 'Add picture';
+    b.appendChild(plus); b.appendChild(txt);
+    b.addEventListener('click', function () { openEditor(null); });
+    return b;
+  }
+
+  function moveTile(i, dir) {
+    var j = i + dir;
+    if (j < 0 || j >= tiles.length) return;
+    var a = tiles[i], b = tiles[j];
+    var tmp = a.order; a.order = b.order; b.order = tmp;
+    sortTiles();
+    render();
+    dbPut(a).then(function () { return dbPut(b); }).catch(function () {});
+  }
+
+  /* ---------- Playback ---------- */
+  function markPlaying(id) {
+    Array.prototype.forEach.call(grid.children, function (c) {
+      c.classList.toggle('playing', c.getAttribute('data-id') === id);
+    });
+  }
+  function setPlaying(id) { playingId = id; markPlaying(id); }
+  function clearPlaying() { playingId = null; markPlaying(null); }
+  function stopAll() {
+    try { player.pause(); } catch (e) {}
+    try { if (window.speechSynthesis) window.speechSynthesis.cancel(); } catch (e) {}
+    clearPlaying();
+  }
+  player.addEventListener('ended', clearPlaying);
+  player.addEventListener('error', clearPlaying);
+
+  function speak(t) {
+    stopAll();
+    var u = urls[t.id];
+    if (u && u.audio) {
+      player.src = u.audio;
+      setPlaying(t.id);
+      var p = player.play();
+      if (p && p.catch) p.catch(clearPlaying);
+    } else if (window.speechSynthesis && window.SpeechSynthesisUtterance && (t.phrase || t.label)) {
+      var ut = new SpeechSynthesisUtterance(t.phrase || t.label);
+      ut.onend = clearPlaying; ut.onerror = clearPlaying;
+      setPlaying(t.id);
+      window.speechSynthesis.speak(ut);
+    } else {
+      setPlaying(t.id);
+      setTimeout(clearPlaying, 600);
+    }
+  }
+
+  /* ---------- Caregiver mode ---------- */
+  var holdTimer = null;
+  var gear = $('gear');
+  function startHold() {
+    gear.classList.add('holding');
+    clearTimeout(holdTimer);
+    holdTimer = setTimeout(function () {
+      gear.classList.remove('holding');
+      editMode = true; stopAll(); render();
+      window.scrollTo(0, 0);
+    }, 1500);
+  }
+  function endHold() { clearTimeout(holdTimer); gear.classList.remove('holding'); }
+  gear.addEventListener('pointerdown', startHold);
+  ['pointerup', 'pointerleave', 'pointercancel'].forEach(function (n) { gear.addEventListener(n, endHold); });
+  gear.addEventListener('contextmenu', function (e) { e.preventDefault(); });
+  gear.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') { editMode = true; stopAll(); render(); }
+  });
+
+  $('doneBtn').addEventListener('click', function () { editMode = false; render(); });
+  Array.prototype.forEach.call(document.querySelectorAll('.seg'), function (b) {
+    b.addEventListener('click', function () {
+      cols = Number(b.getAttribute('data-cols'));
+      render();
+      metaSet('cols', cols).catch(function () {});
+    });
+  });
+
+  /* ---------- Editor ---------- */
+  function setRecStatus(msg, isErr) {
+    var s = $('recStatus');
+    s.textContent = msg || '';
+    s.classList.toggle('err', !!isErr);
+  }
+  function revokeDraftUrls() {
+    if (draft) {
+      if (draft.photoURL && draft.ownPhotoURL) URL.revokeObjectURL(draft.photoURL);
+      if (draft.audioURL && draft.ownAudioURL) URL.revokeObjectURL(draft.audioURL);
+    }
+  }
+  function updatePhotoPreview() {
+    var p = $('edPrev');
+    p.textContent = '';
+    if (draft.photoURL) {
+      var img = document.createElement('img');
+      img.src = draft.photoURL; img.alt = '';
+      p.appendChild(img);
+    } else {
+      p.textContent = draft.emoji || '\uD83D\uDDBC\uFE0F';
+    }
+    $('photoClear').hidden = !draft.photoURL;
+  }
+  function updateRecUI() {
+    var recording = !!rec;
+    var has = !!draft.audioBuf;
+    var rb = $('recBtn');
+    rb.classList.toggle('recording', recording);
+    rb.textContent = recording ? '\u25A0 Stop' : (has ? '\u25CF Record again' : '\u25CF Record');
+    $('playBtn').disabled = recording || !has;
+    $('clearRec').disabled = recording || !has;
+    if (!recording && !$('recStatus').classList.contains('err')) {
+      setRecStatus(has ? 'Recorded. Tap Play to hear it.' : 'No recording yet. Tap Record, then say the phrase.');
+    }
+  }
+
+  function openEditor(id) {
+    var t = id ? findTile(id) : null;
+    var u = (t && urls[t.id]) || {};
+    draft = {
+      id: t ? t.id : null,
+      label: t ? t.label : '',
+      phrase: t ? t.phrase : '',
+      emoji: t ? (t.emoji || '') : '\uD83D\uDDBC\uFE0F',
+      photoBuf: t ? t.photoBuf : null, photoType: t ? t.photoType : null,
+      audioBuf: t ? t.audioBuf : null, audioType: t ? t.audioType : null,
+      photoURL: u.photo || null, ownPhotoURL: false,
+      audioURL: u.audio || null, ownAudioURL: false
+    };
+    $('edTitle').textContent = t ? 'Edit picture' : 'New picture';
+    $('edLabel').value = draft.label;
+    $('edPhrase').value = draft.phrase;
+    $('edEmoji').value = draft.emoji;
+    $('deleteBtn').hidden = !t;
+    $('deleteBtn').textContent = 'Delete picture';
+    $('formErr').textContent = '';
+    $('recStatus').classList.remove('err');
+    updatePhotoPreview();
+    updateRecUI();
+    $('editor').hidden = false;
+    document.body.classList.add('modal');
+    $('editor').scrollTop = 0;
+  }
+
+  function closeEditor() {
+    cancelRecording();
+    stopAll();
+    revokeDraftUrls();
+    draft = null;
+    $('editor').hidden = true;
+    document.body.classList.remove('modal');
+  }
+
+  $('edEmoji').addEventListener('input', function () {
+    if (!draft) return;
+    draft.emoji = $('edEmoji').value;
+    if (!draft.photoURL) updatePhotoPreview();
+  });
+
+  /* Photo */
+  $('photoBtn').addEventListener('click', function () { $('photoFile').click(); });
+  $('photoClear').addEventListener('click', function () {
+    if (draft.photoURL && draft.ownPhotoURL) URL.revokeObjectURL(draft.photoURL);
+    draft.photoBuf = null; draft.photoType = null; draft.photoURL = null; draft.ownPhotoURL = false;
+    updatePhotoPreview();
+  });
+  $('photoFile').addEventListener('change', function () {
+    var f = this.files && this.files[0];
+    this.value = '';
+    if (!f || !draft) return;
+    processPhoto(f).then(function (blob) {
+      return blobToBuf(blob).then(function (buf) {
+        if (!draft) return;
+        if (draft.photoURL && draft.ownPhotoURL) URL.revokeObjectURL(draft.photoURL);
+        draft.photoBuf = buf; draft.photoType = 'image/jpeg';
+        draft.photoURL = URL.createObjectURL(blob); draft.ownPhotoURL = true;
+        updatePhotoPreview();
+      });
+    }).catch(function () {
+      $('formErr').textContent = 'That photo could not be read. Try a different one.';
+    });
+  });
+  function processPhoto(file) {
+    return new Promise(function (res, rej) {
+      var url = URL.createObjectURL(file);
+      var img = new Image();
+      img.onload = function () {
+        var max = 800, w = img.naturalWidth, h = img.naturalHeight;
+        var s = Math.min(1, max / Math.max(w, h));
+        var cw = Math.max(1, Math.round(w * s)), ch = Math.max(1, Math.round(h * s));
+        var c = document.createElement('canvas');
+        c.width = cw; c.height = ch;
+        var cx = c.getContext('2d');
+        cx.fillStyle = '#ffffff'; cx.fillRect(0, 0, cw, ch);
+        cx.drawImage(img, 0, 0, cw, ch);
+        URL.revokeObjectURL(url);
+        c.toBlob(function (b) { b ? res(b) : rej(new Error('encode failed')); }, 'image/jpeg', 0.85);
+      };
+      img.onerror = function () { URL.revokeObjectURL(url); rej(new Error('load failed')); };
+      img.src = url;
+    });
+  }
+
+  /* Recording */
+  function pickMime() {
+    if (typeof MediaRecorder === 'undefined' || !MediaRecorder.isTypeSupported) return '';
+    var c = ['audio/mp4', 'audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus'];
+    for (var i = 0; i < c.length; i++) { if (MediaRecorder.isTypeSupported(c[i])) return c[i]; }
+    return '';
+  }
+  function micMessage(e) {
+    var n = e && e.name;
+    if (n === 'NotAllowedError' || n === 'SecurityError') {
+      return 'The microphone is blocked. On iPhone/iPad: Settings > Apps > Safari > Microphone, or tap the aA icon in the address bar > Website Settings > Microphone > Allow. Then try again.';
+    }
+    if (n === 'NotFoundError') return 'No microphone was found on this device.';
+    if (n === 'NotReadableError') return 'The microphone is in use by another app. Close it and try again.';
+    return 'Could not start the microphone (' + (n || 'unknown error') + ').';
+  }
+
+  function startRecording() {
+    $('recStatus').classList.remove('err');
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || typeof MediaRecorder === 'undefined') {
+      setRecStatus('This browser cannot record audio on this page. Open it in Safari (iPhone/iPad) or Chrome and try again.', true);
+      return;
+    }
+    stopAll();
+    setRecStatus('Starting microphone\u2026');
+    navigator.mediaDevices.getUserMedia({ audio: true }).then(function (stream) {
+      if (!draft) { stream.getTracks().forEach(function (t) { t.stop(); }); return; }
+      var mime = pickMime();
+      var recorder;
+      try { recorder = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream); }
+      catch (e) { stream.getTracks().forEach(function (t) { t.stop(); }); setRecStatus('Recording is not supported here (' + e.name + ').', true); return; }
+      var r = { recorder: recorder, stream: stream, chunks: [], timer: null, started: Date.now(), mime: mime, discard: false };
+      rec = r;
+      recorder.ondataavailable = function (ev) { if (ev.data && ev.data.size) r.chunks.push(ev.data); };
+      recorder.onstop = function () { finishRecording(r); };
+      recorder.onerror = function () { setRecStatus('Recording failed. Try again.', true); };
+      recorder.start();
+      r.timer = setInterval(function () {
+        var s = Math.floor((Date.now() - r.started) / 1000);
+        setRecStatus('Recording\u2026 ' + s + ' s (tap Stop when done)');
+        if (s >= MAX_REC_SECONDS) stopRecording();
+      }, 250);
+      setRecStatus('Recording\u2026 0 s (tap Stop when done)');
+      updateRecUI();
+    }).catch(function (e) {
+      setRecStatus(micMessage(e), true);
+      updateRecUI();
+    });
+  }
+  function stopRecording() {
+    if (rec && rec.recorder && rec.recorder.state !== 'inactive') rec.recorder.stop();
+  }
+  function cancelRecording() {
+    if (!rec) return;
+    rec.discard = true;
+    clearInterval(rec.timer);
+    try { if (rec.recorder.state !== 'inactive') rec.recorder.stop(); } catch (e) {}
+    rec.stream.getTracks().forEach(function (t) { t.stop(); });
+    rec = null;
+  }
+  function finishRecording(r) {
+    clearInterval(r.timer);
+    r.stream.getTracks().forEach(function (t) { t.stop(); });
+    if (rec === r) rec = null;
+    if (r.discard || !draft) return;
+    var type = (r.recorder && r.recorder.mimeType) || r.mime || 'audio/mp4';
+    var blob = new Blob(r.chunks, { type: type });
+    if (blob.size < 1000) {
+      setRecStatus('No sound was captured. Move closer to the microphone and try again.', true);
+      updateRecUI();
+      return;
+    }
+    blobToBuf(blob).then(function (buf) {
+      if (!draft) return;
+      if (draft.audioURL && draft.ownAudioURL) URL.revokeObjectURL(draft.audioURL);
+      draft.audioBuf = buf; draft.audioType = type;
+      draft.audioURL = URL.createObjectURL(blob); draft.ownAudioURL = true;
+      $('recStatus').classList.remove('err');
+      updateRecUI();
+    });
+  }
+
+  $('recBtn').addEventListener('click', function () { if (rec) stopRecording(); else startRecording(); });
+  $('playBtn').addEventListener('click', function () {
+    if (!draft || !draft.audioURL) return;
+    stopAll();
+    player.src = draft.audioURL;
+    var p = player.play();
+    if (p && p.catch) p.catch(function () {});
+  });
+  $('clearRec').addEventListener('click', function () {
+    if (draft.audioURL && draft.ownAudioURL) URL.revokeObjectURL(draft.audioURL);
+    draft.audioBuf = null; draft.audioType = null; draft.audioURL = null; draft.ownAudioURL = false;
+    $('recStatus').classList.remove('err');
+    updateRecUI();
+  });
+
+  /* Save / cancel / delete */
+  $('saveBtn').addEventListener('click', function () {
+    if (rec) { $('formErr').textContent = 'Tap Stop to finish the recording first.'; return; }
+    var label = $('edLabel').value.trim();
+    var phrase = $('edPhrase').value.trim();
+    if (!label && !phrase) { $('formErr').textContent = 'Add a name or a phrase first.'; return; }
+    var t = draft.id ? findTile(draft.id) : null;
+    if (!t) {
+      t = { id: uid(), order: tiles.length ? tiles[tiles.length - 1].order + 1 : 0 };
+      tiles.push(t);
+    }
+    t.label = label || phrase;
+    t.phrase = phrase || label;
+    t.emoji = $('edEmoji').value.trim();
+    t.photoBuf = draft.photoBuf; t.photoType = draft.photoType;
+    t.audioBuf = draft.audioBuf; t.audioType = draft.audioType;
+    sortTiles();
+    makeUrls(t);
+    dbPut(t).catch(function () {
+      showBanner('The last change could not be saved on this device.');
+    });
+    closeEditor();
+    render();
+  });
+  $('cancelBtn').addEventListener('click', closeEditor);
+  var delArmed = false, delTimer = null;
+  $('deleteBtn').addEventListener('click', function () {
+    var btn = $('deleteBtn');
+    if (!delArmed) {
+      delArmed = true;
+      btn.textContent = 'Tap again to delete';
+      clearTimeout(delTimer);
+      delTimer = setTimeout(function () { delArmed = false; btn.textContent = 'Delete picture'; }, 3000);
+      return;
+    }
+    delArmed = false; clearTimeout(delTimer);
+    var id = draft.id;
+    var idx = tiles.indexOf(findTile(id));
+    if (idx >= 0) tiles.splice(idx, 1);
+    revokeUrls(id);
+    dbDelete(id).catch(function () {});
+    closeEditor();
+    render();
+  });
+
+  init();
+})();
+</script>
+</body>
+</html>
