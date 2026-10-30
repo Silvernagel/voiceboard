@@ -251,6 +251,12 @@
   .sheet-btns .spacer { flex: 1 1 auto; }
   .form-err { color: var(--danger); font-weight: 700; min-height: 1.2em; }
 
+  /* Backup and restore */
+  #backupSheet { z-index: 25; }
+  .bk-status { font-weight: 700; padding: 12px 14px; border-radius: 12px; border: 3px solid var(--accent); }
+  .bk-status.warn { border-color: var(--danger); }
+  .rec .hint { color: var(--muted); font-size: 0.95rem; }
+
   @media (prefers-reduced-motion: reduce) {
     .tile, #gear.holding::after { transition: none; }
   }
@@ -269,14 +275,48 @@
       <button class="seg" data-cols="3" aria-pressed="false">3</button>
       <button class="seg" data-cols="4" aria-pressed="false">4</button>
     </div>
+    <button class="btn" id="backupBtn" type="button">Backup</button>
     <button class="btn primary" id="doneBtn">Done</button>
   </div>
 
   <main id="grid" aria-label="Voice board"></main>
 
   <footer>
-    <button id="gear" aria-label="Hold for 2 seconds to edit the board">&#9881; Hold to edit</button>
+    <button id="gear" aria-label="Press and hold to edit the board">&#9881; Hold to edit</button>
   </footer>
+</div>
+
+<div id="backupSheet" class="overlay" hidden>
+  <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="bkTitle">
+    <h2 id="bkTitle">Backup and restore</h2>
+    <div class="bk-status" id="bkStatus" role="status"></div>
+
+    <div class="rec">
+      <div class="rec-title">Save a copy of everything</div>
+      <div class="hint">Makes one file holding every picture, phrase and recording. Save it to Files (iCloud Drive) or send it to yourself, so a copy lives somewhere other than this device.</div>
+      <div class="rec-btns">
+        <button class="btn primary" id="bkMake" type="button">Make backup</button>
+        <button class="btn primary" id="bkShare" type="button" hidden>Save or send backup</button>
+        <button class="btn" id="bkDl" type="button" hidden>Download instead</button>
+      </div>
+      <div class="rec-status" id="bkMsg" role="status"></div>
+    </div>
+
+    <div class="rec">
+      <div class="rec-title">Restore from a backup</div>
+      <div class="hint">Replaces everything on this board with the contents of a backup file.</div>
+      <div class="rec-btns">
+        <button class="btn" id="rsPick" type="button">Choose backup file</button>
+        <input type="file" id="rsFile" accept=".json,application/json" hidden>
+        <button class="btn danger" id="rsGo" type="button" hidden>Replace board with this backup</button>
+      </div>
+      <div class="rec-status" id="rsMsg" role="status"></div>
+    </div>
+
+    <div class="sheet-btns">
+      <button class="btn" id="bkClose" type="button">Close</button>
+    </div>
+  </div>
 </div>
 
 <div id="editor" class="overlay" hidden>
@@ -346,6 +386,7 @@
   var playingId = null;
   var draft = null;          // editor working copy
   var rec = null;            // {recorder, stream, chunks, timer, started, mime}
+  var lastBackupAt = 0, lastChangeAt = 0;   // ms timestamps, kept in the meta store
 
   var STARTERS = [
     { label: 'Restroom', phrase: 'I need to use the restroom.', emoji: '\uD83D\uDEBD' },
@@ -388,8 +429,8 @@
     });
   }
   function dbGetAll()      { return tx('tiles', 'readonly', function (s) { return s.getAll(); }); }
-  function dbPut(t)        { return dbOK ? tx('tiles', 'readwrite', function (s) { return s.put(t); }) : Promise.resolve(); }
-  function dbDelete(id)    { return dbOK ? tx('tiles', 'readwrite', function (s) { return s.delete(id); }) : Promise.resolve(); }
+  function dbPut(t)        { touchChange(); return dbOK ? tx('tiles', 'readwrite', function (s) { return s.put(t); }) : Promise.resolve(); }
+  function dbDelete(id)    { touchChange(); return dbOK ? tx('tiles', 'readwrite', function (s) { return s.delete(id); }) : Promise.resolve(); }
   function metaGet(k)      { return tx('meta', 'readonly', function (s) { return s.get(k); }); }
   function metaSet(k, v)   { return dbOK ? tx('meta', 'readwrite', function (s) { return s.put(v, k); }) : Promise.resolve(); }
 
@@ -439,9 +480,11 @@
       return dbGetAll();
     }).then(function (all) {
       tiles = all || [];
-      return Promise.all([metaGet('seeded'), metaGet('cols')]);
+      return Promise.all([metaGet('seeded'), metaGet('cols'), metaGet('lastBackupAt'), metaGet('lastChangeAt')]);
     }).then(function (m) {
       if (m[1]) cols = m[1];
+      lastBackupAt = Number(m[2]) || 0;
+      lastChangeAt = Number(m[3]) || 0;
       if (!m[0] && tiles.length === 0) return seedTiles();
     }).catch(function () {
       dbOK = false;
@@ -460,6 +503,7 @@
     grid.style.setProperty('--cols', cols);
     document.body.classList.toggle('editing', editMode);
     $('editbar').hidden = !editMode;
+    refreshBackupButton();
     $('gear').parentNode.hidden = editMode;
     Array.prototype.forEach.call(document.querySelectorAll('.seg'), function (b) {
       b.setAttribute('aria-pressed', String(Number(b.getAttribute('data-cols')) === cols));
@@ -878,6 +922,262 @@
     dbDelete(id).catch(function () {});
     closeEditor();
     render();
+  });
+
+  /* ---------- Backup and restore ---------- */
+  var BACKUP_FORMAT = 1;
+  var MAX_BACKUP_BYTES = 200 * 1024 * 1024;
+  var pending = null;        // backup that has been made but not yet saved/sent
+  var restoreData = null;    // parsed backup waiting for confirmation
+  var rsArmed = false, rsTimer = null;
+
+  function touchChange() {
+    lastChangeAt = Math.max(Date.now(), lastBackupAt + 1);
+    metaSet('lastChangeAt', lastChangeAt).catch(function () {});
+    refreshBackupButton();
+  }
+  function needsBackup() { return !lastBackupAt || lastChangeAt > lastBackupAt; }
+  function fmtWhen(ms) {
+    try { return new Date(ms).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }); }
+    catch (e) { return new Date(ms).toString(); }
+  }
+  function dateStamp(ms) {
+    var d = new Date(ms), z = function (n) { return (n < 10 ? '0' : '') + n; };
+    return d.getFullYear() + '-' + z(d.getMonth() + 1) + '-' + z(d.getDate());
+  }
+  function plural(n, w) { return n + ' ' + w + (n === 1 ? '' : 's'); }
+  function refreshBackupButton() { $('backupBtn').textContent = needsBackup() ? 'Back up now' : 'Backup'; }
+  function refreshBackupStatus() {
+    var el = $('bkStatus'), warn = needsBackup(), msg;
+    if (!lastBackupAt) msg = 'No backup has been made yet.';
+    else if (warn) msg = 'Changes have been made since the last backup (' + fmtWhen(lastBackupAt) + '). Make a new one.';
+    else msg = 'Backed up ' + fmtWhen(lastBackupAt) + '. Nothing has changed since.';
+    el.textContent = msg;
+    el.classList.toggle('warn', warn);
+    refreshBackupButton();
+  }
+  function setMsg(id, msg, isErr) { var e = $(id); e.textContent = msg || ''; e.classList.toggle('err', !!isErr); }
+  function markBackedUp(madeAt) {
+    lastBackupAt = madeAt;
+    if (lastChangeAt > lastBackupAt) lastChangeAt = lastBackupAt;
+    metaSet('lastBackupAt', lastBackupAt).catch(function () {});
+    metaSet('lastChangeAt', lastChangeAt).catch(function () {});
+    refreshBackupStatus();
+  }
+
+  function bufToB64(buf) {
+    return new Promise(function (res, rej) {
+      var fr = new FileReader();
+      fr.onload = function () { var s = String(fr.result); res(s.slice(s.indexOf(',') + 1)); };
+      fr.onerror = function () { rej(fr.error); };
+      fr.readAsDataURL(new Blob([buf]));
+    });
+  }
+  function b64ToBuf(s) {
+    var bin = atob(s), n = bin.length, u = new Uint8Array(n);
+    for (var i = 0; i < n; i++) u[i] = bin.charCodeAt(i);
+    return u.buffer;
+  }
+
+  function makeBackup() {
+    var snap = tiles.slice(), madeAt = Date.now(), colsNow = cols;
+    return Promise.all(snap.map(function (t) {
+      return Promise.all([t.photoBuf ? bufToB64(t.photoBuf) : null, t.audioBuf ? bufToB64(t.audioBuf) : null]).then(function (p) {
+        return {
+          id: t.id, order: t.order, label: t.label || '', phrase: t.phrase || '', emoji: t.emoji || '',
+          photoType: t.photoBuf ? (t.photoType || 'image/jpeg') : null, photo: p[0],
+          audioType: t.audioBuf ? (t.audioType || 'audio/mp4') : null, audio: p[1]
+        };
+      });
+    })).then(function (list) {
+      var text = JSON.stringify({ app: 'voice-board', format: BACKUP_FORMAT, createdAt: new Date(madeAt).toISOString(), cols: colsNow, tiles: list });
+      var blob = new Blob([text], { type: 'application/json' });
+      var name = 'voice-board-backup-' + dateStamp(madeAt) + '.json';
+      var file;
+      try { file = new File([blob], name, { type: 'application/json' }); } catch (e) { file = blob; file.name = name; }
+      return {
+        file: file, blob: blob, name: name, madeAt: madeAt, bytes: blob.size,
+        tiles: snap.length,
+        pics: snap.filter(function (t) { return !!t.photoBuf; }).length,
+        voices: snap.filter(function (t) { return !!t.audioBuf; }).length
+      };
+    });
+  }
+
+  function canShareFile(file) {
+    try { return !!(navigator.share && navigator.canShare && navigator.canShare({ files: [file] })); }
+    catch (e) { return false; }
+  }
+
+  function openBackup() {
+    pending = null; restoreData = null; rsArmed = false; clearTimeout(rsTimer);
+    $('bkShare').hidden = true; $('bkDl').hidden = true; $('rsGo').hidden = true;
+    $('bkMake').disabled = false;
+    setMsg('bkMsg', ''); setMsg('rsMsg', '');
+    refreshBackupStatus();
+    $('backupSheet').hidden = false;
+    document.body.classList.add('modal');
+    $('backupSheet').scrollTop = 0;
+  }
+  function closeBackup() {
+    pending = null; restoreData = null; rsArmed = false; clearTimeout(rsTimer);
+    $('backupSheet').hidden = true;
+    document.body.classList.remove('modal');
+  }
+  $('backupBtn').addEventListener('click', openBackup);
+  $('bkClose').addEventListener('click', closeBackup);
+
+  $('bkMake').addEventListener('click', function () {
+    var btn = $('bkMake');
+    btn.disabled = true;
+    $('bkShare').hidden = true; $('bkDl').hidden = true; pending = null;
+    setMsg('bkMsg', 'Making the backup\u2026');
+    makeBackup().then(function (b) {
+      pending = b;
+      var mb = Math.max(0.1, Math.round(b.bytes / 1024 / 1024 * 10) / 10);
+      setMsg('bkMsg', 'Backup ready: ' + plural(b.tiles, 'picture') + ', ' + plural(b.voices, 'recording') + ' (' + mb + ' MB). Now tap \u201CSave or send backup\u201D and choose where to keep it.');
+      if (canShareFile(b.file)) { $('bkShare').hidden = false; }
+      else { $('bkDl').hidden = false; $('bkShare').hidden = true; setMsg('bkMsg', $('bkMsg').textContent.replace(/ Now tap.*$/, ' This browser cannot open the share sheet, so tap \u201CDownload instead\u201D.')); }
+      btn.disabled = false;
+    }).catch(function () {
+      setMsg('bkMsg', 'The backup could not be made. Try again.', true);
+      btn.disabled = false;
+    });
+  });
+
+  /* The share call must run directly inside the tap (iOS refuses it after waiting), so the file is made first. */
+  $('bkShare').addEventListener('click', function () {
+    var b = pending;
+    if (!b) return;
+    if (!canShareFile(b.file)) { $('bkDl').hidden = false; setMsg('bkMsg', 'Sharing is not available here. Use \u201CDownload instead\u201D.', true); return; }
+    var p;
+    try { p = navigator.share({ files: [b.file], title: 'Voice Board backup' }); }
+    catch (e) { p = Promise.reject(e); }
+    p.then(function () {
+      markBackedUp(b.madeAt);
+      setMsg('bkMsg', 'Done. Check that the file is in the place you chose (for example Files > iCloud Drive).');
+    }, function (e) {
+      if (e && e.name === 'AbortError') { setMsg('bkMsg', 'Cancelled. The backup has not been saved yet. Tap \u201CSave or send backup\u201D to try again.', true); }
+      else { $('bkDl').hidden = false; setMsg('bkMsg', 'The share sheet could not open. You can try again, or use \u201CDownload instead\u201D.', true); }
+    });
+  });
+
+  $('bkDl').addEventListener('click', function () {
+    var b = pending;
+    if (!b) return;
+    try {
+      var url = URL.createObjectURL(b.blob);
+      var a = document.createElement('a');
+      a.href = url; a.download = b.name;
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      setTimeout(function () { URL.revokeObjectURL(url); }, 60000);
+      markBackedUp(b.madeAt);
+      setMsg('bkMsg', 'Download started. Look for ' + b.name + ' in Downloads or Files, and confirm it is there.');
+    } catch (e) {
+      setMsg('bkMsg', 'The download could not start.', true);
+    }
+  });
+
+  /* Restore */
+  function parseBackup(text) {
+    var o;
+    try { o = JSON.parse(text); } catch (e) { throw new Error('That file is not a Voice Board backup.'); }
+    if (!o || o.app !== 'voice-board' || !Array.isArray(o.tiles)) throw new Error('That file is not a Voice Board backup.');
+    if (o.format !== BACKUP_FORMAT) throw new Error('That backup was made by a different version of Voice Board and cannot be read.');
+    var seen = {}, b64 = /^[A-Za-z0-9+\/]*={0,2}$/, out = [];
+    for (var i = 0; i < o.tiles.length; i++) {
+      var r = o.tiles[i];
+      if (!r || typeof r !== 'object' || typeof r.id !== 'string' || !r.id || seen[r.id] ||
+          typeof r.order !== 'number' || !isFinite(r.order)) throw new Error('The backup file is damaged (picture ' + (i + 1) + ').');
+      seen[r.id] = true;
+      var t = { id: r.id, order: r.order, label: String(r.label == null ? '' : r.label), phrase: String(r.phrase == null ? '' : r.phrase), emoji: String(r.emoji == null ? '' : r.emoji) };
+      var kinds = [['photo', 'photoBuf', 'photoType'], ['audio', 'audioBuf', 'audioType']];
+      for (var k = 0; k < kinds.length; k++) {
+        var data = r[kinds[k][0]];
+        if (data == null) continue;
+        if (typeof data !== 'string' || !b64.test(data)) throw new Error('The backup file is damaged (picture ' + (i + 1) + ').');
+        if (!data) continue;
+        try { t[kinds[k][1]] = b64ToBuf(data); } catch (e) { throw new Error('The backup file is damaged (picture ' + (i + 1) + ').'); }
+        t[kinds[k][2]] = typeof r[kinds[k][2]] === 'string' && r[kinds[k][2]] ? r[kinds[k][2]] : (k === 0 ? 'image/jpeg' : 'audio/mp4');
+      }
+      out.push(t);
+    }
+    var c = Number(o.cols);
+    return { tiles: out, cols: (c >= 1 && c <= 4 && c === Math.floor(c)) ? c : 2, createdAt: typeof o.createdAt === 'string' ? Date.parse(o.createdAt) : NaN };
+  }
+
+  function dbReplaceAll(list, colsNew, stamp) {
+    if (!dbOK) return Promise.resolve();
+    return new Promise(function (res, rej) {
+      var t;
+      try {
+        t = db.transaction(['tiles', 'meta'], 'readwrite');
+        var ts = t.objectStore('tiles'), ms = t.objectStore('meta');
+        ts.clear();
+        list.forEach(function (x) { ts.put(x); });
+        ms.put(true, 'seeded'); ms.put(colsNew, 'cols');
+        ms.put(stamp, 'lastBackupAt'); ms.put(stamp, 'lastChangeAt');
+      } catch (e) { rej(e); return; }
+      t.oncomplete = function () { res(); };
+      t.onerror = function () { rej(t.error); };
+      t.onabort = function () { rej(t.error || new Error('aborted')); };
+    });
+  }
+
+  $('rsPick').addEventListener('click', function () { $('rsFile').click(); });
+  $('rsFile').addEventListener('change', function () {
+    var f = this.files && this.files[0];
+    this.value = '';
+    restoreData = null; rsArmed = false; clearTimeout(rsTimer);
+    $('rsGo').hidden = true; $('rsGo').textContent = 'Replace board with this backup';
+    if (!f) return;
+    if (f.size > MAX_BACKUP_BYTES) { setMsg('rsMsg', 'That file is too large to be a Voice Board backup.', true); return; }
+    setMsg('rsMsg', 'Reading the file\u2026');
+    var fr = new FileReader();
+    fr.onerror = function () { setMsg('rsMsg', 'That file could not be read.', true); };
+    fr.onload = function () {
+      var parsed;
+      try { parsed = parseBackup(String(fr.result)); }
+      catch (e) { setMsg('rsMsg', e.message, true); return; }
+      restoreData = parsed;
+      var voices = parsed.tiles.filter(function (t) { return !!t.audioBuf; }).length;
+      var when = isNaN(parsed.createdAt) ? '' : ' (made ' + fmtWhen(parsed.createdAt) + ')';
+      setMsg('rsMsg', 'This backup' + when + ' has ' + plural(parsed.tiles.length, 'picture') + ', ' + plural(voices, 'recording') + '. Restoring will remove the ' + plural(tiles.length, 'picture') + ' on this board now and replace them.');
+      $('rsGo').hidden = false;
+    };
+    fr.readAsText(f);
+  });
+
+  $('rsGo').addEventListener('click', function () {
+    var btn = $('rsGo');
+    if (!restoreData) return;
+    if (!rsArmed) {
+      rsArmed = true;
+      btn.textContent = 'Tap again to replace the board';
+      clearTimeout(rsTimer);
+      rsTimer = setTimeout(function () { rsArmed = false; btn.textContent = 'Replace board with this backup'; }, 5000);
+      return;
+    }
+    rsArmed = false; clearTimeout(rsTimer);
+    var r = restoreData, stamp = Date.now();
+    btn.disabled = true;
+    dbReplaceAll(r.tiles, r.cols, stamp).then(function () {
+      stopAll();
+      Object.keys(urls).forEach(revokeUrls);
+      tiles = r.tiles.slice();
+      cols = r.cols;
+      lastBackupAt = stamp; lastChangeAt = stamp;
+      sortTiles();
+      tiles.forEach(makeUrls);
+      restoreData = null;
+      btn.disabled = false; btn.hidden = true; btn.textContent = 'Replace board with this backup';
+      render();
+      refreshBackupStatus();
+      setMsg('rsMsg', 'Restored ' + plural(tiles.length, 'picture') + ' from the backup.');
+    }).catch(function () {
+      btn.disabled = false; btn.textContent = 'Replace board with this backup';
+      setMsg('rsMsg', 'The restore did not work, and the board was left as it was. Try again.', true);
+    });
   });
 
   init();
